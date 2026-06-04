@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from database.postgres import get_connection
 
 app = Flask(__name__)
@@ -9,7 +9,8 @@ def home():
     return jsonify({
         "message": "Books Scraper API Running",
         "endpoints": [
-            "/books",
+            "/books?page=1&limit=20",
+            "/books/<id>",
             "/count",
             "/search/<keyword>"
         ]
@@ -19,21 +20,31 @@ def home():
 @app.route("/books")
 def get_books():
 
+    page = request.args.get("page", 1, type=int)
+    limit = request.args.get("limit", 20, type=int)
+
+    offset = (page - 1) * limit
+
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT title, price
+    cursor.execute(
+        """
+        SELECT id, title, price
         FROM products
-        LIMIT 20
-    """)
+        ORDER BY id
+        LIMIT %s OFFSET %s
+        """,
+        (limit, offset)
+    )
 
     books = cursor.fetchall()
 
     result = []
 
-    for title, price in books:
+    for book_id, title, price in books:
         result.append({
+            "id": book_id,
             "title": title,
             "price": price
         })
@@ -41,7 +52,43 @@ def get_books():
     cursor.close()
     conn.close()
 
-    return jsonify(result)
+    return jsonify({
+        "page": page,
+        "limit": limit,
+        "results": result
+    })
+
+
+@app.route("/books/<int:book_id>")
+def get_book(book_id):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT id, title, price
+        FROM products
+        WHERE id = %s
+        """,
+        (book_id,)
+    )
+
+    book = cursor.fetchone()
+
+    cursor.close()
+    conn.close()
+
+    if not book:
+        return jsonify({
+            "error": "Book not found"
+        }), 404
+
+    return jsonify({
+        "id": book[0],
+        "title": book[1],
+        "price": book[2]
+    })
 
 
 @app.route("/count")
@@ -72,7 +119,7 @@ def search_books(keyword):
 
     cursor.execute(
         """
-        SELECT title, price
+        SELECT id, title, price
         FROM products
         WHERE title ILIKE %s
         LIMIT 20
@@ -84,8 +131,9 @@ def search_books(keyword):
 
     result = []
 
-    for title, price in books:
+    for book_id, title, price in books:
         result.append({
+            "id": book_id,
             "title": title,
             "price": price
         })
